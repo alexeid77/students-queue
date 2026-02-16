@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Электронная очередь</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Электронная очередь на защиту работ</h1>
+        <div class="card login-card">
+            <h2>Вход в систему</h2>
+            <div class="form-group">
+                <label for="isu_id">ISU ID:</label>
+                <input type="text" id="isu_id" placeholder="Введите ваш ISU ID" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Роль:</label>
+                <div class="role-select">
+                    <label class="role-option">
+                        <input type="radio" name="role" value="student" checked>
+                        <span class="role-label">Я студент</span>
+                    </label>
+                    <label class="role-option">
+                        <input type="radio" name="role" value="teacher">
+                        <span class="role-label">Я преподаватель</span>
+                    </label>
+                </div>
+            </div>
+            <button id="login-btn" class="btn btn-primary" onclick="doLogin()">Войти</button>
+            <div id="login-error" class="error-msg" style="display:none;"></div>
+        </div>
+    </div>
+    <script>
+        async function doLogin() {
+            const isuId = document.getElementById('isu_id').value.trim();
+            const role = document.querySelector('input[name="role"]:checked').value;
+            const errorEl = document.getElementById('login-error');
+            errorEl.style.display = 'none';
+
+            if (!isuId) {
+                errorEl.textContent = 'Введите ISU ID';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({isu_id: isuId, role: role})
+            });
+            const data = await res.json();
+            if (data.ok) {
+                window.location.href = data.redirect;
+            } else {
+                errorEl.textContent = data.error;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        document.getElementById('isu_id').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') doLogin();
+        });
+    </script>
+</body>
+</html>

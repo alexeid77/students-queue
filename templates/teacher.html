@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Преподаватель — Электронная очередь</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Панель преподавателя</h1>
+            <button class="btn btn-small" onclick="doLogout()">Выйти</button>
+        </div>
+
+        <div id="no-queue" class="card" style="display:none;">
+            <h2>Создать новую очередь</h2>
+            <div class="form-group">
+                <label for="discipline">Дисциплина:</label>
+                <input type="text" id="discipline" placeholder="Название дисциплины">
+            </div>
+            <div class="form-group">
+                <label for="work">Работа:</label>
+                <input type="text" id="work" placeholder="Например: ЛР №3">
+            </div>
+            <button class="btn btn-primary" onclick="startQueue()">Запустить очередь</button>
+            <div id="start-error" class="error-msg" style="display:none;"></div>
+        </div>
+
+        <div id="active-queue" style="display:none;">
+            <div class="card">
+                <h2 id="queue-title"></h2>
+                <div id="queue-paused-badge" class="badge badge-warning" style="display:none;">ПАУЗА</div>
+                <div class="stats-row">
+                    <div class="stat-item">
+                        <span class="stat-label">Всего в очереди:</span>
+                        <span class="stat-value" id="stat-total">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Ожидают:</span>
+                        <span class="stat-value" id="stat-waiting">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Обслужено:</span>
+                        <span class="stat-value" id="stat-done">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Ср. время обсл.:</span>
+                        <span class="stat-value" id="stat-avg">—</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Оценка до конца:</span>
+                        <span class="stat-value" id="stat-remaining">—</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" id="current-card">
+                <h3>Текущий студент</h3>
+                <div id="current-student-info" class="current-student">
+                    <span class="no-student">Никто не вызван</span>
+                </div>
+            </div>
+
+            <div class="card actions-card">
+                <div class="actions-row">
+                    <button class="btn btn-primary" onclick="callNext()">Вызвать следующего</button>
+                    <button class="btn btn-warning" id="pause-btn" onclick="togglePause()">Пауза</button>
+                    <button class="btn btn-danger" onclick="finishQueue()">Завершить очередь</button>
+                </div>
+                <div id="action-error" class="error-msg" style="display:none;"></div>
+            </div>
+
+            <div class="card">
+                <h3>Список студентов</h3>
+                <table class="queue-table">
+                    <thead>
+                        <tr>
+                            <th>Позиция</th>
+                            <th>ISU ID</th>
+                            <th>Статус</th>
+                            <th>Начало обсл.</th>
+                            <th>Конец обсл.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="queue-tbody"></tbody>
+                </table>
+                <div id="empty-queue-msg" class="empty-msg" style="display:none;">Очередь пуста</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STATUS_LABELS = {
+            'waiting': 'Ожидает',
+            'called': 'Вызван',
+            'servicing': 'Обслуживается',
+            'done': 'Обслужен',
+            'skipped': 'Пропущен'
+        };
+
+        function formatTime(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            return d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+        }
+
+        async function loadStatus() {
+            try {
+                const res = await fetch('/api/queue/status');
+                const data = await res.json();
+
+                if (!data.active) {
+                    document.getElementById('no-queue').style.display = '';
+                    document.getElementById('active-queue').style.display = 'none';
+                    return;
+                }
+
+                document.getElementById('no-queue').style.display = 'none';
+                document.getElementById('active-queue').style.display = '';
+
+                document.getElementById('queue-title').textContent =
+                    data.queue.discipline_name + ' — ' + data.queue.work_name;
+
+                const pausedBadge = document.getElementById('queue-paused-badge');
+                const pauseBtn = document.getElementById('pause-btn');
+                if (data.queue.paused) {
+                    pausedBadge.style.display = '';
+                    pauseBtn.textContent = 'Возобновить';
+                } else {
+                    pausedBadge.style.display = 'none';
+                    pauseBtn.textContent = 'Пауза';
+                }
+
+                document.getElementById('stat-total').textContent = data.stats.total;
+                document.getElementById('stat-waiting').textContent = data.stats.waiting;
+                document.getElementById('stat-done').textContent = data.stats.done;
+                document.getElementById('stat-avg').textContent =
+                    data.stats.avg_service_time_sec ? (Math.round(data.stats.avg_service_time_sec) + ' сек') : '—';
+                document.getElementById('stat-remaining').textContent =
+                    data.stats.est_remaining_min ? (data.stats.est_remaining_min + ' мин') : '—';
+
+                const csInfo = document.getElementById('current-student-info');
+                if (data.current_student) {
+                    csInfo.innerHTML = '<strong>ISU ID: ' + data.current_student.isu_id +
+                        '</strong> (позиция ' + data.current_student.position +
+                        '), вызван в ' + formatTime(data.current_student.service_start_at);
+                } else {
+                    csInfo.innerHTML = '<span class="no-student">Никто не вызван</span>';
+                }
+
+                const tbody = document.getElementById('queue-tbody');
+                const emptyMsg = document.getElementById('empty-queue-msg');
+                if (data.items.length === 0) {
+                    tbody.innerHTML = '';
+                    emptyMsg.style.display = '';
+                } else {
+                    emptyMsg.style.display = 'none';
+                    tbody.innerHTML = data.items.map(function(item) {
+                        const statusClass = item.status === 'called' ? 'status-called' :
+                            item.status === 'done' ? 'status-done' : '';
+                        return '<tr class="' + statusClass + '">' +
+                            '<td>' + item.position + '</td>' +
+                            '<td>' + item.isu_id + '</td>' +
+                            '<td>' + (STATUS_LABELS[item.status] || item.status) + '</td>' +
+                            '<td>' + formatTime(item.service_start_at) + '</td>' +
+                            '<td>' + formatTime(item.service_end_at) + '</td>' +
+                            '</tr>';
+                    }).join('');
+                }
+            } catch(e) {
+                console.error('Error loading status:', e);
+            }
+        }
+
+        async function startQueue() {
+            const discipline = document.getElementById('discipline').value.trim();
+            const work = document.getElementById('work').value.trim();
+            const errEl = document.getElementById('start-error');
+            errEl.style.display = 'none';
+
+            if (!discipline || !work) {
+                errEl.textContent = 'Заполните оба поля';
+                errEl.style.display = 'block';
+                return;
+            }
+
+            const res = await fetch('/api/queue/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({discipline_name: discipline, work_name: work})
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                errEl.textContent = data.error;
+                errEl.style.display = 'block';
+            } else {
+                loadStatus();
+            }
+        }
+
+        async function callNext() {
+            const errEl = document.getElementById('action-error');
+            errEl.style.display = 'none';
+            const res = await fetch('/api/queue/next', {method: 'POST'});
+            const data = await res.json();
+            if (data.error) {
+                errEl.textContent = data.error;
+                errEl.style.display = 'block';
+            }
+            loadStatus();
+        }
+
+        async function togglePause() {
+            const res = await fetch('/api/queue/pause', {method: 'POST'});
+            loadStatus();
+        }
+
+        async function finishQueue() {
+            if (!confirm('Вы уверены, что хотите завершить очередь?')) return;
+            const res = await fetch('/api/queue/finish', {method: 'POST'});
+            loadStatus();
+        }
+
+        async function doLogout() {
+            await fetch('/api/logout', {method: 'POST'});
+            window.location.href = '/';
+        }
+
+        loadStatus();
+        setInterval(loadStatus, 5000);
+    </script>
+</body>
+</html>

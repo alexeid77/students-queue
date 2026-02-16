@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Студент — Электронная очередь</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Страница студента</h1>
+            <button class="btn btn-small" onclick="doLogout()">Выйти</button>
+        </div>
+
+        <div id="no-queue" class="card" style="display:none;">
+            <p class="info-msg">Очередь не запущена. Ожидайте, пока преподаватель создаст очередь.</p>
+        </div>
+
+        <div id="queue-info" style="display:none;">
+            <div class="card">
+                <h2 id="queue-title"></h2>
+                <div id="queue-paused-badge" class="badge badge-warning" style="display:none;">Обслуживание приостановлено</div>
+            </div>
+
+            <div id="not-enrolled" class="card" style="display:none;">
+                <p>Вы не записаны в текущую очередь.</p>
+                <button class="btn btn-primary" onclick="enqueue()">Записаться в очередь</button>
+                <div id="enqueue-error" class="error-msg" style="display:none;"></div>
+                <div id="enqueue-success" class="success-msg" style="display:none;"></div>
+            </div>
+
+            <div id="enrolled" style="display:none;">
+                <div id="called-banner" class="card called-banner" style="display:none;">
+                    <h2>ВАС ВЫЗВАЛИ!</h2>
+                    <p>Подойдите к преподавателю.</p>
+                </div>
+
+                <div class="card">
+                    <h3>Ваш статус</h3>
+                    <div class="my-status">
+                        <div class="status-item">
+                            <span class="status-label">Позиция:</span>
+                            <span class="status-value" id="my-position">—</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Статус:</span>
+                            <span class="status-value" id="my-status">—</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Впереди вас:</span>
+                            <span class="status-value" id="my-ahead">—</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Оценка ожидания:</span>
+                            <span class="status-value" id="my-wait">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Общая информация</h3>
+                    <div class="stats-row">
+                        <div class="stat-item">
+                            <span class="stat-label">Всего в очереди:</span>
+                            <span class="stat-value" id="stat-total">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Ожидают:</span>
+                            <span class="stat-value" id="stat-waiting">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Обслужено:</span>
+                            <span class="stat-value" id="stat-done">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Ср. время обсл.:</span>
+                            <span class="stat-value" id="stat-avg">—</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STATUS_LABELS = {
+            'waiting': 'Ожидает',
+            'called': 'Вызван',
+            'servicing': 'Обслуживается',
+            'done': 'Обслужен',
+            'skipped': 'Пропущен'
+        };
+
+        async function loadMyStatus() {
+            try {
+                const res = await fetch('/api/queue/my_status');
+                const data = await res.json();
+
+                if (!data.active) {
+                    document.getElementById('no-queue').style.display = '';
+                    document.getElementById('queue-info').style.display = 'none';
+                    return;
+                }
+
+                document.getElementById('no-queue').style.display = 'none';
+                document.getElementById('queue-info').style.display = '';
+                document.getElementById('queue-title').textContent =
+                    data.queue.discipline_name + ' — ' + data.queue.work_name;
+
+                const pausedBadge = document.getElementById('queue-paused-badge');
+                pausedBadge.style.display = data.queue.paused ? '' : 'none';
+
+                if (!data.enrolled) {
+                    document.getElementById('not-enrolled').style.display = '';
+                    document.getElementById('enrolled').style.display = 'none';
+                    return;
+                }
+
+                document.getElementById('not-enrolled').style.display = 'none';
+                document.getElementById('enrolled').style.display = '';
+
+                const calledBanner = document.getElementById('called-banner');
+                if (data.my.status === 'called' || data.my.status === 'servicing') {
+                    calledBanner.style.display = '';
+                } else {
+                    calledBanner.style.display = 'none';
+                }
+
+                document.getElementById('my-position').textContent = data.my.position;
+                document.getElementById('my-status').textContent = STATUS_LABELS[data.my.status] || data.my.status;
+                document.getElementById('my-ahead').textContent = data.my.people_ahead;
+                document.getElementById('my-wait').textContent =
+                    data.my.est_wait_min ? (data.my.est_wait_min + ' мин') : '—';
+
+                if (data.stats) {
+                    document.getElementById('stat-total').textContent = data.stats.total;
+                    document.getElementById('stat-waiting').textContent = data.stats.waiting;
+                    document.getElementById('stat-done').textContent = data.stats.done;
+                    document.getElementById('stat-avg').textContent =
+                        data.stats.avg_service_time_sec ? (Math.round(data.stats.avg_service_time_sec) + ' сек') : '—';
+                }
+            } catch(e) {
+                console.error('Error loading status:', e);
+            }
+        }
+
+        async function enqueue() {
+            const errEl = document.getElementById('enqueue-error');
+            const succEl = document.getElementById('enqueue-success');
+            errEl.style.display = 'none';
+            succEl.style.display = 'none';
+
+            const res = await fetch('/api/queue/enqueue', {method: 'POST'});
+            const data = await res.json();
+            if (data.error) {
+                errEl.textContent = data.error;
+                errEl.style.display = 'block';
+            } else {
+                let msg = 'Вы записаны! Ваша позиция: ' + data.position;
+                if (data.est_wait_min) {
+                    msg += '. Оценка ожидания: ~' + data.est_wait_min + ' мин';
+                }
+                succEl.textContent = msg;
+                succEl.style.display = 'block';
+                loadMyStatus();
+            }
+        }
+
+        async function doLogout() {
+            await fetch('/api/logout', {method: 'POST'});
+            window.location.href = '/';
+        }
+
+        loadMyStatus();
+        setInterval(loadMyStatus, 5000);
+    </script>
+</body>
+</html>
